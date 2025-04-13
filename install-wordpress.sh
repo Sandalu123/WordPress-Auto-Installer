@@ -846,9 +846,28 @@ function configure_mysql() {
     systemctl enable mysql
     systemctl start mysql
     
-    # Set root password and secure installation
-    mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';"
-    mysql -e "FLUSH PRIVILEGES;"
+    # Check if MySQL is already secured (root password set)
+    if mysql -u root -e "SELECT 1" &>/dev/null; then
+        # Root has no password, set it
+        mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';"
+        mysql -e "FLUSH PRIVILEGES;"
+    else
+        # Root already has a password, prompt for it
+        local current_pass
+        echo -ne "${YELLOW}Enter current MySQL root password: ${NC}"
+        read -s current_pass
+        echo ""
+        
+        # Verify password works
+        if ! mysql -u root -p"$current_pass" -e "SELECT 1" &>/dev/null; then
+            error "Invalid MySQL root password. Please run the script again with the correct password."
+            exit 1
+        fi
+        
+        # Set new root password
+        mysql -u root -p"$current_pass" -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';"
+        mysql -u root -p"$current_pass" -e "FLUSH PRIVILEGES;"
+    fi
     
     # Create MySQL config for root
     touch /root/.my.cnf
@@ -858,6 +877,8 @@ function configure_mysql() {
 user=root
 password=$MYSQL_ROOT_PASS
 EOF
+    
+    # Use the .my.cnf file for authentication in future commands
     
     # Create WordPress database and user
     mysql -e "CREATE DATABASE $DB_NAME;"
