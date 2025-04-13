@@ -1,4 +1,3 @@
-
 #!/bin/bash
 #
 # WordPress Auto-Installation Script
@@ -142,7 +141,11 @@ function validate_ssl_files() {
         fi
     fi
     
-    return $valid
+    if [ "$valid" = true ]; then
+        return 0
+    else
+        return 1
+    fi
 }
 
 # Configure SSL options
@@ -525,81 +528,7 @@ function configure_cloudflare() {
     a2enmod ssl
     a2enmod headers
     
-    # Create and configure wp-config.php
-    step "Configuring WordPress..."
-    cp $INSTALL_DIR/wp-config-sample.php $INSTALL_DIR/wp-config.php
-    
-    # Update database settings
-    sed -i "s/database_name_here/$DB_NAME/g" $INSTALL_DIR/wp-config.php
-    sed -i "s/username_here/$DB_USER/g" $INSTALL_DIR/wp-config.php
-    sed -i "s/password_here/$DB_PASSWORD/g" $INSTALL_DIR/wp-config.php
-    
-    # Add direct filesystem method
-    sed -i "/That's all, stop editing/i define('FS_METHOD', 'direct');" $INSTALL_DIR/wp-config.php
-    
-    # If HTTPS is enabled with domain, configure WordPress site URL
-    if $ENABLE_HTTPS && [ -n "$SSL_DOMAIN" ]; then
-        local site_url
-        if [ "$HTTPS_PORT" == "443" ]; then
-            site_url="https://$SSL_DOMAIN"
-        else
-            site_url="https://$SSL_DOMAIN:$HTTPS_PORT"
-        fi
-        
-        sed -i "/That's all, stop editing/i define('WP_SITEURL', '$site_url');" $INSTALL_DIR/wp-config.php
-        sed -i "/That's all, stop editing/i define('WP_HOME', '$site_url');" $INSTALL_DIR/wp-config.php
-        
-        if [ "$SSL_TYPE" == "cloudflare" ]; then
-            # Add CloudFlare settings
-            sed -i "/That's all, stop editing/i if (isset(\$_SERVER['HTTP_CF_VISITOR']) && strpos(\$_SERVER['HTTP_CF_VISITOR'], 'https') !== false) { \$_SERVER['HTTPS'] = 'on'; }" $INSTALL_DIR/wp-config.php
-        else
-            # Standard HTTPS settings
-            sed -i "/That's all, stop editing/i define('FORCE_SSL_ADMIN', true);" $INSTALL_DIR/wp-config.php
-        fi
-    fi
-    
-    # Generate and add security salts
-    step "Generating security keys..."
-    SALTS=$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)
-    sed -i "/put your unique phrase here/d" $INSTALL_DIR/wp-config.php
-    printf '%s\n' "$(awk '/AUTH_KEY/,/NONCE_SALT/ {print $0}' $INSTALL_DIR/wp-config.php)" | sed -i -e '/put your unique phrase here/d' $INSTALL_DIR/wp-config.php
-    sed -i "/#@-/a $SALTS" $INSTALL_DIR/wp-config.php
-    
-    # Create .htaccess for pretty permalinks
-    cat << EOF > $INSTALL_DIR/.htaccess
-# BEGIN WordPress
-<IfModule mod_rewrite.c>
-RewriteEngine On
-RewriteBase /
-RewriteRule ^index\.php$ - [L]
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule . /index.php [L]
-</IfModule>
-# END WordPress
-EOF
-    
-    # If using CloudFlare, add CloudFlare specific .htaccess rules
-    if [ "$SSL_TYPE" == "cloudflare" ]; then
-        cat << EOF >> $INSTALL_DIR/.htaccess
-
-# BEGIN CloudFlare
-<IfModule mod_rewrite.c>
-    RewriteEngine On
-    RewriteCond %{HTTP:CF-Visitor} '"scheme":"https"'
-    RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [L]
-</IfModule>
-# END CloudFlare
-EOF
-    fi
-    
-    # Set final permissions
-    chown www-data:www-data $INSTALL_DIR -R
-    find $INSTALL_DIR -type d -exec chmod 755 {} \;
-    find $INSTALL_DIR -type f -exec chmod 644 {} \;
-    
-    success "WordPress installed and configured successfully"
-} SSL config for Apache
+    # SSL config for Apache
     cat << EOF > /etc/apache2/sites-available/$SSL_DOMAIN-ssl.conf
 <IfModule mod_ssl.c>
     <VirtualHost *:$HTTPS_PORT>
@@ -950,4 +879,144 @@ function install_wordpress() {
     # Set proper ownership
     chown www-data:www-data $INSTALL_DIR -R
     
-    # Create
+    success "WordPress downloaded and extracted"
+}
+
+# Configure WordPress
+function configure_wordpress() {
+    step "Configuring WordPress..."
+    
+    # Create and configure wp-config.php
+    cp $INSTALL_DIR/wp-config-sample.php $INSTALL_DIR/wp-config.php
+    
+    # Update database settings
+    sed -i "s/database_name_here/$DB_NAME/g" $INSTALL_DIR/wp-config.php
+    sed -i "s/username_here/$DB_USER/g" $INSTALL_DIR/wp-config.php
+    sed -i "s/password_here/$DB_PASSWORD/g" $INSTALL_DIR/wp-config.php
+    
+    # Add direct filesystem method
+    sed -i "/That's all, stop editing/i define('FS_METHOD', 'direct');" $INSTALL_DIR/wp-config.php
+    
+    # If HTTPS is enabled with domain, configure WordPress site URL
+    if $ENABLE_HTTPS && [ -n "$SSL_DOMAIN" ]; then
+        local site_url
+        if [ "$HTTPS_PORT" == "443" ]; then
+            site_url="https://$SSL_DOMAIN"
+        else
+            site_url="https://$SSL_DOMAIN:$HTTPS_PORT"
+        fi
+        
+        sed -i "/That's all, stop editing/i define('WP_SITEURL', '$site_url');" $INSTALL_DIR/wp-config.php
+        sed -i "/That's all, stop editing/i define('WP_HOME', '$site_url');" $INSTALL_DIR/wp-config.php
+        
+        if [ "$SSL_TYPE" == "cloudflare" ]; then
+            # Add CloudFlare settings
+            sed -i "/That's all, stop editing/i if (isset(\$_SERVER['HTTP_CF_VISITOR']) && strpos(\$_SERVER['HTTP_CF_VISITOR'], 'https') !== false) { \$_SERVER['HTTPS'] = 'on'; }" $INSTALL_DIR/wp-config.php
+        else
+            # Standard HTTPS settings
+            sed -i "/That's all, stop editing/i define('FORCE_SSL_ADMIN', true);" $INSTALL_DIR/wp-config.php
+        fi
+    fi
+    
+    # Generate and add security salts
+    step "Generating security keys..."
+    SALTS=$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)
+    sed -i "/put your unique phrase here/d" $INSTALL_DIR/wp-config.php
+    printf '%s\n' "$(awk '/AUTH_KEY/,/NONCE_SALT/ {print $0}' $INSTALL_DIR/wp-config.php)" | sed -i -e '/put your unique phrase here/d' $INSTALL_DIR/wp-config.php
+    sed -i "/#@-/a $SALTS" $INSTALL_DIR/wp-config.php
+    
+    # Create .htaccess for pretty permalinks
+    cat << EOF > $INSTALL_DIR/.htaccess
+# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+# END WordPress
+EOF
+    
+    # If using CloudFlare, add CloudFlare specific .htaccess rules
+    if [ "$SSL_TYPE" == "cloudflare" ]; then
+        cat << EOF >> $INSTALL_DIR/.htaccess
+
+# BEGIN CloudFlare
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{HTTP:CF-Visitor} '"scheme":"https"'
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}/$1 [L]
+</IfModule>
+# END CloudFlare
+EOF
+    fi
+    
+    # Set final permissions
+    chown www-data:www-data $INSTALL_DIR -R
+    find $INSTALL_DIR -type d -exec chmod 755 {} \;
+    find $INSTALL_DIR -type f -exec chmod 644 {} \;
+    
+    success "WordPress installed and configured successfully"
+}
+
+# Main installation function
+function install() {
+    # Get user configuration
+    configure_user_settings
+    
+    # Start installation
+    step "Starting WordPress installation..."
+    
+    # Install required packages
+    install_packages
+    
+    # Configure Apache
+    configure_apache
+    
+    # Configure HTTPS if enabled
+    if $ENABLE_HTTPS; then
+        configure_https
+    fi
+    
+    # Configure MySQL
+    configure_mysql
+    
+    # Install WordPress
+    install_wordpress
+    
+    # Configure WordPress
+    configure_wordpress
+    
+    # Configure firewall if enabled
+    if $ENABLE_FIREWALL; then
+        configure_firewall
+    fi
+    
+    # Save credentials
+    save_credentials
+    
+    # Installation complete
+    echo ""
+    echo -e "${GREEN}===================================================="
+    echo "      WordPress Installation Complete!"
+    echo "====================================================${NC}"
+    echo ""
+    echo -e "${BLUE}WordPress URL:${NC} http://$(hostname -I | awk '{print $1}' | tr -d '[:space:]'):$HTTP_PORT/"
+    
+    if $ENABLE_HTTPS; then
+        if [ -n "$SSL_DOMAIN" ]; then
+            echo -e "${BLUE}Secure URL:${NC} https://$SSL_DOMAIN:$HTTPS_PORT/"
+        else
+            echo -e "${BLUE}Secure URL:${NC} https://$(hostname -I | awk '{print $1}' | tr -d '[:space:]'):$HTTPS_PORT/"
+        fi
+    fi
+    
+    echo -e "${BLUE}WordPress Admin:${NC} http://$(hostname -I | awk '{print $1}' | tr -d '[:space:]'):$HTTP_PORT/wp-admin/"
+    echo -e "${BLUE}Credentials:${NC} Saved to $LOG_FILE"
+    echo ""
+}
+
+# Execute the script
+install
