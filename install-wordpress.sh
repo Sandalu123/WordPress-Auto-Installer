@@ -12,7 +12,7 @@ set -e
 
 # Variables
 INSTALL_DIR="/var/www/html"
-DB_NAME="wp$(date %s)"
+DB_NAME="wp$(date)"
 DB_USER=$DB_NAME
 DB_PASSWORD=$(date | md5sum | cut -c '1-12')
 MYSQL_ROOT_PASS=$(date | md5sum | cut -c '1-12')
