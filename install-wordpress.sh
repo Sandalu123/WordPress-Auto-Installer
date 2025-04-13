@@ -12,10 +12,10 @@ set -e
 
 # Variables
 INSTALL_DIR="/var/www/html"
-DB_NAME="wp$(date)"
+DB_NAME="wp$(date +%Y%m%d%H%M%S)"
 DB_USER=$DB_NAME
-DB_PASSWORD=$(date | md5sum | cut -c '1-12')
-MYSQL_ROOT_PASS=$(date | md5sum | cut -c '1-12')
+DB_PASSWORD=$(date +%Y%m%d%H%M%S | md5sum | cut -c '1-12')
+MYSQL_ROOT_PASS=$(date +%Y%m%d%H%M%S | md5sum | cut -c '1-12')
 LOG_FILE="/root/wp_credentials.log"
 
 # Default ports
