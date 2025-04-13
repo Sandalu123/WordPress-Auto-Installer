@@ -18,6 +18,7 @@ DB_PASSWORD=$(date | md5sum | cut -c '1-12')
 MYSQL_ROOT_PASS=$(date | md5sum | cut -c '1-12')
 LOG_FILE="/root/wp_credentials.log"
 
+
 # Default ports
 HTTP_PORT=80
 HTTPS_PORT=443
@@ -418,7 +419,43 @@ function install_packages() {
     apt -y install apache2
     
     step "Installing MySQL database server..."
-    apt -y install mysql-server
+# Prompt for user input to remove MySQL installation
+read -p "Do you want to completely remove MySQL installation? (y/n): " remove_mysql
+if [ "$remove_mysql" == "y" ]; then
+    # Stop MySQL service
+    sudo service mysql stop
+
+    # Remove MySQL packages
+    sudo apt-get remove --purge mysql-server mysql-client mysql-common -y
+    sudo apt-get autoremove -y
+    sudo apt-get autoclean
+
+    # Delete MySQL data directories
+    sudo rm -rf /var/lib/mysql
+    sudo rm -rf /etc/mysql
+
+    # Clean up any remaining config files
+    sudo rm -rf /var/log/mysql
+    sudo rm -rf /var/log/mysql.*
+    sudo rm -rf /var/run/mysqld
+    sudo rm -rf /var/lib/mysql-files
+    sudo rm -rf /var/lib/mysql-keyring
+
+    # Remove app armor profile if it exists
+    sudo rm -f /etc/apparmor.d/usr.sbin.mysqld
+fi
+
+# Update package lists
+sudo apt-get update
+
+# Print generated passwords
+echo "Please note down the generated passwords for MySQL."
+echo "MySQL root password: $MYSQL_ROOT_PASS"
+echo "MySQL user password: $DB_PASSWORD"
+echo "Make sure to use the MySQL root password when prompted during the configuration."
+
+# Addressing the MySQL access denied error
+echo "If you encounter an 'Access denied for user 'root'@'localhost'' error, ensure that you have the correct password for the MySQL root user."
     
     step "Installing PHP and required extensions..."
     apt -y install php php-bz2 php-mysqli php-curl php-gd php-intl php-common php-mbstring php-xml
