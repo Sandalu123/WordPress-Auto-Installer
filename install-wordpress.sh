@@ -79,13 +79,19 @@ function error() {
 
 # Prompt for user input with a default value
 function prompt_with_default() {
-    local prompt=$1
-    local default=$2
+    local prompt_text=$1
+    local default_value=$2
+    local result_var_name=$3 # Name of the variable to store result
     local input
-    
-    echo -ne "${YELLOW}$prompt [${default}]: ${NC}" >&2 # Redirect prompt to stderr
+
+    # Print prompt to stderr
+    echo -ne "${YELLOW}${prompt_text} [${default_value}]: ${NC}" >&2
+
+    # Read input from stdin
     read input
-    echo "${input:-$default}"
+
+    # Assign the input or default value to the variable name provided using printf -v
+    printf -v "$result_var_name" '%s' "${input:-$default_value}"
 }
 
 # Check if a file exists and is readable
@@ -178,7 +184,7 @@ function configure_ssl_options() {
             echo "3. SSL/TLS encryption mode should be set to Full or Full (strict)"
             echo ""
             
-            SSL_DOMAIN=$(prompt_with_default "Enter your domain (e.g., example.com)" "")
+            prompt_with_default "Enter your domain (e.g., example.com)" "" SSL_DOMAIN
             
             if [ -z "$SSL_DOMAIN" ]; then
                 error "Domain name is required for CloudFlare setup"
@@ -186,7 +192,7 @@ function configure_ssl_options() {
             fi
             
             info "Optional: Enter CloudFlare API credentials for automatic setup"
-            CF_EMAIL=$(prompt_with_default "Enter CloudFlare email address (optional)" "")
+            prompt_with_default "Enter CloudFlare email address (optional)" "" CF_EMAIL
             
             if [ -n "$CF_EMAIL" ]; then
                 echo -ne "${YELLOW}Enter CloudFlare Global API Key (input will be hidden): ${NC}"
@@ -203,7 +209,7 @@ function configure_ssl_options() {
             echo "2. Port 80 must be open to the internet for verification"
             echo ""
             
-            SSL_DOMAIN=$(prompt_with_default "Enter your domain (e.g., example.com)" "")
+            prompt_with_default "Enter your domain (e.g., example.com)" "" SSL_DOMAIN
             
             if [ -z "$SSL_DOMAIN" ]; then
                 error "Domain name is required for Let's Encrypt"
@@ -226,7 +232,7 @@ function configure_ssl_options() {
                 success "Domain $SSL_DOMAIN correctly points to this server"
             fi
             
-            SSL_EMAIL=$(prompt_with_default "Enter email address for Let's Encrypt notices" "admin@$SSL_DOMAIN")
+            prompt_with_default "Enter email address for Let's Encrypt notices" "admin@$SSL_DOMAIN" SSL_EMAIL
             ;;
         4)
             SSL_TYPE="custom"
@@ -236,14 +242,14 @@ function configure_ssl_options() {
             echo "You will need to provide paths to your existing certificate and key files."
             echo ""
             
-            CUSTOM_CERT_PATH=$(prompt_with_default "Enter path to SSL certificate file (.crt/.pem)" "")
+            prompt_with_default "Enter path to SSL certificate file (.crt/.pem)" "" CUSTOM_CERT_PATH
             
             if [ -z "$CUSTOM_CERT_PATH" ]; then
                 error "Certificate path is required"
                 return 1
             fi
             
-            CUSTOM_KEY_PATH=$(prompt_with_default "Enter path to SSL private key file (.key)" "")
+            prompt_with_default "Enter path to SSL private key file (.key)" "" CUSTOM_KEY_PATH
             
             if [ -z "$CUSTOM_KEY_PATH" ]; then
                 error "Private key path is required"
@@ -257,7 +263,7 @@ function configure_ssl_options() {
             
             SSL_DOMAIN=$(openssl x509 -noout -subject -in "$CUSTOM_CERT_PATH" | sed -n 's/.*CN *= *\([^ ]*\).*/\1/p')
             if [ -z "$SSL_DOMAIN" ]; then
-                SSL_DOMAIN=$(prompt_with_default "Could not determine domain from certificate. Please enter domain name" "")
+                prompt_with_default "Could not determine domain from certificate. Please enter domain name" "" SSL_DOMAIN
             else
                 info "Domain from certificate: $SSL_DOMAIN"
             fi
@@ -279,7 +285,7 @@ function configure_user_settings() {
     echo ""
     
     # HTTP port configuration
-    HTTP_PORT=$(prompt_with_default "Which HTTP port would you like WordPress to run on" "80")
+    prompt_with_default "Which HTTP port would you like WordPress to run on" "80" HTTP_PORT
     
     # HTTPS configuration
     local https_choice
@@ -287,7 +293,7 @@ function configure_user_settings() {
     read https_choice
     if [[ "${https_choice,,}" == "y" ]]; then
         ENABLE_HTTPS=true
-        HTTPS_PORT=$(prompt_with_default "Which HTTPS port would you like to use" "443")
+        prompt_with_default "Which HTTPS port would you like to use" "443" HTTPS_PORT
         
         # Configure SSL options
         configure_ssl_options || {
@@ -302,7 +308,7 @@ function configure_user_settings() {
     read firewall_choice
     if [[ "${firewall_choice,,}" == "y" ]]; then
         ENABLE_FIREWALL=true
-        SSH_PORT=$(prompt_with_default "Which SSH port would you like to keep open" "22")
+        prompt_with_default "Which SSH port would you like to keep open" "22" SSH_PORT
         
         # Additional ports
         echo -ne "${YELLOW}Please enter any additional ports to open (comma-separated, e.g., 25,8080) or press Enter for none: ${NC}"
@@ -493,6 +499,7 @@ function configure_apache() {
 </VirtualHost>
 EOF
         
+        echo "DEBUG: SSL_DOMAIN value before a2ensite: [$SSL_DOMAIN]" >&2
         a2ensite "$SSL_DOMAIN"
         a2dissite 000-default
     fi
