@@ -83,7 +83,7 @@ function prompt_with_default() {
     local default=$2
     local input
     
-    echo -ne "${YELLOW}$prompt [${default}]: ${NC}"
+    echo -ne "${YELLOW}$prompt [${default}]: ${NC}" >&2 # Redirect prompt to stderr
     read input
     echo "${input:-$default}"
 }
