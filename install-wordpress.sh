@@ -476,7 +476,7 @@ function configure_apache() {
     if $ENABLE_HTTPS && [ -n "$SSL_DOMAIN" ]; then
         step "Creating virtual host for $SSL_DOMAIN..."
         
-        cat << EOF > /etc/apache2/sites-available/$SSL_DOMAIN.conf
+        cat << EOF > "/etc/apache2/sites-available/$SSL_DOMAIN.conf"
 <VirtualHost *:$HTTP_PORT>
     ServerAdmin webmaster@$SSL_DOMAIN
     ServerName $SSL_DOMAIN
@@ -493,7 +493,7 @@ function configure_apache() {
 </VirtualHost>
 EOF
         
-        a2ensite $SSL_DOMAIN
+        a2ensite "$SSL_DOMAIN"
         a2dissite 000-default
     fi
     
