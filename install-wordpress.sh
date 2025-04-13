@@ -891,45 +891,58 @@ function configure_mysql() {
     systemctl enable mysql
     systemctl start mysql
     
-    # Check if MySQL is already secured (root password set)
-    if mysql -u root -e "SELECT 1" &>/dev/null; then
-        # Root has no password, set it
-        mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';"
-        mysql -e "FLUSH PRIVILEGES;"
-    else
-        # Root already has a password, prompt for it
-        local current_pass
-        echo -ne "${YELLOW}Enter current MySQL root password: ${NC}"
-        read -s current_pass
-        echo ""
-        
-        # Verify password works
-        if ! mysql -u root -p"$current_pass" -e "SELECT 1" &>/dev/null; then
-            error "Invalid MySQL root password. Please run the script again with the correct password."
-            exit 1
-        fi
-        
-        # Set new root password
-        mysql -u root -p"$current_pass" -e "ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$MYSQL_ROOT_PASS';"
-        mysql -u root -p"$current_pass" -e "FLUSH PRIVILEGES;"
+    # Prompt for MySQL root password
+    local mysql_password
+    echo -ne "${YELLOW}Enter MySQL root password: ${NC}"
+    read -s mysql_password
+    echo ""
+    
+    # Verify the password works
+    echo "Verifying MySQL connection..."
+    if ! mysql -u root -p"$mysql_password" -e "SELECT 1" &>/dev/null; then
+        error "Invalid MySQL root password. Please run the script again with the correct password."
+        exit 1
     fi
     
-    # Create MySQL config for root
+    echo "MySQL connection successful."
+    
+    # Create MySQL config for root to avoid password prompts in future commands
+    echo "Creating MySQL configuration file..."
     touch /root/.my.cnf
     chmod 640 /root/.my.cnf
     cat << EOF > /root/.my.cnf
 [client]
 user=root
-password=$MYSQL_ROOT_PASS
+password=$mysql_password
 EOF
     
-    # Use the .my.cnf file for authentication in future commands
+    # Now use the password for all operations
+    echo "Creating WordPress database and user..."
     
     # Create WordPress database and user
-    mysql -e "CREATE DATABASE $DB_NAME;"
-    mysql -e "CREATE USER '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';"
-    mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
-    mysql -e "FLUSH PRIVILEGES;"
+    mysql -u root -p"$mysql_password" -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+    if [ $? -ne 0 ]; then
+        error "Failed to create database. Check MySQL connection."
+        exit 1
+    fi
+    
+    mysql -u root -p"$mysql_password" -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED WITH mysql_native_password BY '$DB_PASSWORD';"
+    if [ $? -ne 0 ]; then
+        error "Failed to create user. Check MySQL connection."
+        exit 1
+    fi
+    
+    mysql -u root -p"$mysql_password" -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost';"
+    if [ $? -ne 0 ]; then
+        error "Failed to grant privileges. Check MySQL connection."
+        exit 1
+    fi
+    
+    mysql -u root -p"$mysql_password" -e "FLUSH PRIVILEGES;"
+    if [ $? -ne 0 ]; then
+        error "Failed to flush privileges. Check MySQL connection."
+        exit 1
+    fi
     
     success "MySQL configured successfully"
 }
@@ -993,10 +1006,20 @@ function configure_wordpress() {
     
     # Generate and add security salts
     step "Generating security keys..."
+    
+    # Download salts from WordPress API
     SALTS=$(curl -s https://api.wordpress.org/secret-key/1.1/salt/)
+    
+    # Remove existing placeholder keys
     sed -i "/put your unique phrase here/d" $INSTALL_DIR/wp-config.php
-    printf '%s\n' "$(awk '/AUTH_KEY/,/NONCE_SALT/ {print $0}' $INSTALL_DIR/wp-config.php)" | sed -i -e '/put your unique phrase here/d' $INSTALL_DIR/wp-config.php
-    sed -i "/#@-/a $SALTS" $INSTALL_DIR/wp-config.php
+    success "Step 1 done"
+
+    # Add the new salts - using a temporary file approach to avoid sed escaping issues
+    SALT_FILE=$(mktemp)
+    echo "$SALTS" > $SALT_FILE
+    sed -i "/#@-/r $SALT_FILE" $INSTALL_DIR/wp-config.php
+    rm $SALT_FILE
+    success "Step 2 done"
     
     # Create .htaccess for pretty permalinks
     cat << EOF > $INSTALL_DIR/.htaccess
