@@ -419,10 +419,10 @@ function install_packages() {
     apt -y install apache2
     
     step "Installing MySQL database server..."
-# Prompt for user input to remove MySQL installation
-read -p "Do you want to completely remove MySQL installation? (y/n): " remove_mysql
-if [ "$remove_mysql" == "y" ]; then
-    # Stop MySQL service
+    # Prompt for user input to remove MySQL installation
+    read -p "Do you want to completely remove MySQL installation? (y/n): " remove_mysql
+    if [ "$remove_mysql" == "y" ]; then
+        # Stop MySQL service
     sudo service mysql stop
 
     # Remove MySQL packages
@@ -443,7 +443,11 @@ if [ "$remove_mysql" == "y" ]; then
 
     # Remove app armor profile if it exists
     sudo rm -f /etc/apparmor.d/usr.sbin.mysqld
-fi
+
+        # Reinstall MySQL
+        step "Reinstalling MySQL database server..."
+        apt -y install mysql-server
+    fi
 
 # Update package lists
 sudo apt-get update
