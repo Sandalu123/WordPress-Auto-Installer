@@ -760,6 +760,166 @@ function Manage-Tables {
         }
     }
 }
+#region Database Management Functions
+ 
+function Create-MySQLDatabase {
+    param (
+        [string]$MySQLPath,
+        [string]$Username,
+        [string]$Password
+    )
+    
+    Show-Header
+    Write-Host "Create New MySQL Database" -ForegroundColor Yellow
+    Write-Host "-----------------------------------------------" -ForegroundColor Yellow
+    
+    $newDbName = Read-Host "Enter the name for the new database"
+    
+    if ([string]::IsNullOrEmpty($newDbName)) {
+        Write-Host "Database name cannot be empty." -ForegroundColor Red
+        Read-Host "Press Enter to continue"
+        return
+    }
+    
+    # Basic validation for database name (avoid spaces, special chars might need more robust check)
+    if ($newDbName -match '[^a-zA-Z0-9_]') {
+         Write-Host "Warning: Database name contains characters other than letters, numbers, or underscores. This might cause issues." -ForegroundColor Yellow
+    }
+ 
+    $createDbCmd = "CREATE DATABASE \`$newDbName\`;" # Use backticks to escape potential reserved keywords
+    
+    Write-Host "Attempting to create database '$newDbName'..." -ForegroundColor Cyan
+    
+    $success = Invoke-MySQLCommand -MySQLPath $MySQLPath -Username $Username -Password $Password -Command $createDbCmd
+    
+    if ($success) {
+        Write-Host "Database '$newDbName' created successfully!" -ForegroundColor Green
+    } else {
+        Write-Host "Failed to create database '$newDbName'. Check permissions or if it already exists." -ForegroundColor Red
+    }
+    
+    Read-Host "Press Enter to continue"
+}
+ 
+function Delete-MySQLDatabase {
+    param (
+        [string]$MySQLPath,
+        [string]$Username,
+        [string]$Password
+    )
+    
+    Show-Header
+    Write-Host "Delete MySQL Database" -ForegroundColor Yellow
+    Write-Host "-----------------------------------------------" -ForegroundColor Yellow
+    
+    $databases = Get-MySQLDatabases -MySQLPath $MySQLPath -Username $Username -Password $Password
+    
+    if ($databases.Count -eq 0) {
+        Write-Host "No user databases found to delete." -ForegroundColor Red
+        Read-Host "Press Enter to continue"
+        return
+    }
+    
+    Write-Host "Available User Databases:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $databases.Count; $i++) {
+        Write-Host "  [$($i+1)] $($databases[$i])" -ForegroundColor White
+    }
+    Write-Host ""
+    
+    $dbChoice = Read-Host "Select a database to DELETE (1-$($databases.Count)) or press Enter to cancel"
+    
+    if ([string]::IsNullOrEmpty($dbChoice)) {
+        Write-Host "Deletion canceled." -ForegroundColor Yellow
+        Read-Host "Press Enter to continue"
+        return
+    }
+    
+    try {
+        $dbIndex = [int]$dbChoice - 1
+        if ($dbIndex -ge 0 -and $dbIndex -lt $databases.Count) {
+            $targetDb = $databases[$dbIndex]
+            
+            Write-Host "WARNING: You are about to permanently delete the database '$targetDb' and all its data!" -ForegroundColor Red
+            $confirmation = Read-Host "Are you absolutely sure? Type 'yes' to confirm deletion"
+            
+            if ($confirmation -eq "yes") {
+                $dropDbCmd = "DROP DATABASE \`$targetDb\`;" # Use backticks
+                
+                Write-Host "Attempting to delete database '$targetDb'..." -ForegroundColor Cyan
+                
+                $success = Invoke-MySQLCommand -MySQLPath $MySQLPath -Username $Username -Password $Password -Command $dropDbCmd
+                
+                if ($success) {
+                    Write-Host "Database '$targetDb' deleted successfully!" -ForegroundColor Green
+                } else {
+                    Write-Host "Failed to delete database '$targetDb'. Check permissions." -ForegroundColor Red
+                }
+            } else {
+                Write-Host "Database deletion canceled." -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "Invalid database selection." -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "Invalid input." -ForegroundColor Red
+    }
+    
+    Read-Host "Press Enter to continue"
+}
+ 
+function Manage-Databases {
+    param (
+        [string]$MySQLPath,
+        [string]$Username,
+        [string]$Password
+    )
+    
+    $continueManagingDatabases = $true
+    
+    while ($continueManagingDatabases) {
+        Show-Header
+        Write-Host "MySQL Database Management" -ForegroundColor Yellow
+        Write-Host "-----------------------------------------------" -ForegroundColor Yellow
+        
+        $dbOptions = @(
+            "List Databases",
+            "Create New Database",
+            "Delete Database",
+            "Return to Main Menu"
+        )
+        
+        $dbChoice = Show-Menu -Title "Database Management Options" -Options $dbOptions -DefaultOption 0
+        
+        switch ($dbChoice) {
+            0 { # List Databases
+                Show-Header
+                Write-Host "Available User Databases:" -ForegroundColor Cyan
+                $databases = Get-MySQLDatabases -MySQLPath $MySQLPath -Username $Username -Password $Password
+                if ($databases.Count -gt 0) {
+                    foreach ($db in $databases) {
+                        Write-Host "  - $db" -ForegroundColor White
+                    }
+                } else {
+                    Write-Host "No user databases found." -ForegroundColor Yellow
+                }
+                Write-Host ""
+                Read-Host "Press Enter to continue"
+            }
+            1 { # Create New Database
+                Create-MySQLDatabase -MySQLPath $MySQLPath -Username $Username -Password $Password
+            }
+            2 { # Delete Database
+                Delete-MySQLDatabase -MySQLPath $MySQLPath -Username $Username -Password $Password
+            }
+            3 { # Return to Main Menu
+                $continueManagingDatabases = $false
+            }
+        }
+    }
+}
+ 
+#endregion
+ 
 
 function Create-Backup {
     param (
@@ -1343,6 +1503,7 @@ while (-not $exitApplication) {
     
     $mainOptions = @(
         "User Management",
+        "Database Management", # Added
         "Table Management",
         "Create Database Backup",
         "MySQL Service Control",
@@ -1356,13 +1517,16 @@ while (-not $exitApplication) {
         0 { # User Management
             Manage-Users -MySQLPath $global:MySQLPath -Username $global:Username -Password $global:Password
         }
-        1 { # Table Management
+        1 { # Database Management (New)
+            Manage-Databases -MySQLPath $global:MySQLPath -Username $global:Username -Password $global:Password
+        }
+        2 { # Table Management
             Manage-Tables -MySQLPath $global:MySQLPath -Username $global:Username -Password $global:Password
         }
-        2 { # Create Database Backup
+        3 { # Create Database Backup
             Create-Backup -MySQLPath $global:MySQLPath -Username $global:Username -Password $global:Password
         }
-        3 { # MySQL Service Control
+        4 { # MySQL Service Control
             Show-Header
             Write-Host "MySQL Service Control" -ForegroundColor Yellow
             Write-Host "-----------------------------------------------" -ForegroundColor Yellow
@@ -1393,10 +1557,10 @@ while (-not $exitApplication) {
             
             Read-Host "Press Enter to continue"
         }
-        4 { # Reset Root Password
+        5 { # Reset Root Password
             Reset-RootPassword -MySQLPath $global:MySQLPath
         }
-        5 { # Exit
+        6 { # Exit
             $exitApplication = $true
         }
     }
