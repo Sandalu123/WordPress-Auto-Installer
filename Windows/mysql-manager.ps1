@@ -5,6 +5,34 @@
 param (
     [string]$CustomPath = ""
 )
+#region Admin Check and Relaunch
+# Check if the script is running as Administrator
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    # If not running as admin, try to relaunch with elevated privileges
+    Write-Warning "This script requires Administrator privileges to manage MySQL services and potentially reset passwords."
+    Write-Host "Attempting to relaunch with Administrator rights..." -ForegroundColor Yellow
+    
+    try {
+        # Construct the command to re-run the script with the same parameters
+        $scriptPath = $MyInvocation.MyCommand.Path
+        $arguments = @("-File", "`"$scriptPath`"") + $PSBoundParameters.Keys.ForEach({ "-$_", "`"$($PSBoundParameters[$_])`"" })
+        
+        Start-Process powershell.exe -ArgumentList $arguments -Verb RunAs -ErrorAction Stop
+        
+        # If Start-Process succeeded, exit the current non-admin instance
+        Write-Host "Relaunch initiated. Exiting current instance." -ForegroundColor Green
+        exit
+    } catch {
+        Write-Error "Failed to relaunch script with Administrator privileges: $_"
+        Write-Error "Please run this script manually as an Administrator."
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+} else {
+    Write-Host "Running with Administrator privileges." -ForegroundColor Green
+}
+#endregion
+ 
 
 function Show-Header {
     Clear-Host
