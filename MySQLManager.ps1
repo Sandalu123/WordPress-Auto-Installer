@@ -443,16 +443,16 @@ function Manage-Tables {
                     $tables = Get-MySQLTables -MySQLPath $MySQLPath -Username $Username -Password $Password -Database $selectedDb
                     
                     Show-Header
-                    Write-Host "Database: $selectedDb" -ForegroundColor Cyan
+                    Write-Host "Database: $($selectedDb)" -ForegroundColor Cyan
                     Write-Host "-----------------------------------------------" -ForegroundColor Yellow
                     
                     if ($tables.Count -gt 0) {
-                        Write-Host "Tables in $selectedDb:" -ForegroundColor Cyan
+                        Write-Host "Tables in $($selectedDb):" -ForegroundColor Cyan
                         foreach ($table in $tables) {
                             Write-Host "  - $table" -ForegroundColor White
                         }
                     } else {
-                        Write-Host "No tables found in $selectedDb." -ForegroundColor Yellow
+                        Write-Host "No tables found in $($selectedDb)." -ForegroundColor Yellow
                     }
                     
                     Write-Host ""
