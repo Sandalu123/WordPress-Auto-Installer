@@ -87,17 +87,46 @@ function Test-Credentials {
         [string]$Password
     )
     
+    # First check if the MySQL path is valid
+    if (-not (Test-Path -Path "$MySQLPath\bin\mysql.exe")) {
+        Write-Host "Error: MySQL client not found at $MySQLPath\bin\mysql.exe" -ForegroundColor Red
+        return $false
+    }
+    
     try {
-        $cmdArgs = "--user=`"$Username`""
-        if ($Password) {
-            $cmdArgs += " --password=`"$Password`""
-        }
-        $cmdArgs += " --execute=`"SELECT 1;`""
+        # Build command arguments
+        $args = @("--user=`"$Username`"")
         
-        $process = Start-Process -FilePath "$MySQLPath\bin\mysql.exe" -ArgumentList $cmdArgs -NoNewWindow -PassThru -Wait
+        if (-not [string]::IsNullOrEmpty($Password)) {
+            $args += "--password=`"$Password`""
+        }
+        
+        $args += "--execute=`"SELECT 1;`""
+        
+        # Create process info
+        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+        $pinfo.FileName = "$MySQLPath\bin\mysql.exe"
+        $pinfo.Arguments = $args -join " "
+        $pinfo.RedirectStandardOutput = $true
+        $pinfo.RedirectStandardError = $true
+        $pinfo.UseShellExecute = $false
+        $pinfo.CreateNoWindow = $true
+        
+        # Start the process
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $pinfo
+        $process.Start() | Out-Null
+        
+        # Capture output
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        
+        # Return success based on exit code
         return ($process.ExitCode -eq 0)
     }
     catch {
+        Write-Host "Error testing MySQL credentials: $_" -ForegroundColor Red
         return $false
     }
 }
@@ -249,6 +278,7 @@ function Reset-RootPassword {
     Show-Header
     Write-Host "Reset MySQL Root Password" -ForegroundColor Yellow
     Write-Host "-----------------------------------------------" -ForegroundColor Yellow
+    Write-Host "Using init-file method for MySQL password reset" -ForegroundColor Cyan
     
     $newPassword = Read-Host "Enter new root password"
     
@@ -258,28 +288,211 @@ function Reset-RootPassword {
         return
     }
     
-    $initFile = [System.IO.Path]::GetTempFileName()
-    "ALTER USER 'root'@'localhost' IDENTIFIED BY '$newPassword';" | Out-File -FilePath $initFile -Encoding ASCII
-    "FLUSH PRIVILEGES;" | Out-File -FilePath $initFile -Encoding ASCII -Append
+    # Get service name
+    $mysqlService = Get-Service | Where-Object { $_.Name -like "MySQL*" -or $_.Name -like "mysql*" } | Select-Object -First 1
     
-    Write-Host "Stopping MySQL service..." -ForegroundColor Yellow
-    Manage-MySQLService -MySQLPath $MySQLPath -Action "stop"
+    if (-not $mysqlService) {
+        Write-Host "Could not find MySQL service. Please ensure MySQL is installed as a Windows service." -ForegroundColor Red
+        Read-Host "Press Enter to continue"
+        return
+    }
     
-    Write-Host "Starting MySQL in safe mode to reset password..." -ForegroundColor Yellow
-    $safeProcess = Start-Process -FilePath "$MySQLPath\bin\mysqld.exe" -ArgumentList "--skip-grant-tables --init-file=`"$initFile`"" -NoNewWindow -PassThru
+    $serviceName = $mysqlService.Name
+    Write-Host "Found MySQL service: $serviceName" -ForegroundColor Green
     
-    Write-Host "Waiting for password reset to complete..." -ForegroundColor Yellow
-    Start-Sleep -Seconds 10
+    # Step 1: Stop the MySQL service
+    Write-Host "Step 1: Stopping MySQL service..." -ForegroundColor Yellow
+    Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
     
-    Write-Host "Stopping MySQL safe mode..." -ForegroundColor Yellow
-    Stop-Process -Id $safeProcess.Id -Force
+    # Wait to ensure service is stopped
+    $timeoutCounter = 0
+    while ((Get-Service -Name $serviceName).Status -ne 'Stopped' -and $timeoutCounter -lt 10) {
+        Start-Sleep -Seconds 1
+        $timeoutCounter++
+    }
     
-    Write-Host "Starting MySQL service normally..." -ForegroundColor Yellow
-    Manage-MySQLService -MySQLPath $MySQLPath -Action "start"
+    if ((Get-Service -Name $serviceName).Status -ne 'Stopped') {
+        Write-Host "Could not stop MySQL service properly. Attempting to force stop..." -ForegroundColor Red
+        $mysqlProcesses = Get-Process -Name mysql* -ErrorAction SilentlyContinue
+        foreach ($process in $mysqlProcesses) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Seconds 2
+    }
     
-    Remove-Item -Path $initFile -Force
+    Write-Host "MySQL service stopped." -ForegroundColor Green
     
-    Write-Host "Password reset completed successfully!" -ForegroundColor Green
+    # Step 2: Create initialization file
+    Write-Host "Step 2: Creating password reset file..." -ForegroundColor Yellow
+    $initFile = "C:\mysql-init.txt"
+    "ALTER USER 'root'@'localhost' IDENTIFIED BY '$newPassword';" | Out-File -FilePath $initFile -Encoding ASCII -Force
+    
+    Write-Host "Created password reset file at: $initFile" -ForegroundColor Green
+    
+    # Step 3: Find mysqld path
+    Write-Host "Step 3: Locating mysqld executable..." -ForegroundColor Yellow
+    $mysqldPath = "$MySQLPath\bin\mysqld.exe"
+    
+    if (-not (Test-Path -Path $mysqldPath)) {
+        # Try to find it
+        $standardPaths = @(
+            "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqld.exe",
+            "C:\Program Files\MySQL\MySQL Server 5.7\bin\mysqld.exe",
+            "C:\Program Files (x86)\MySQL\MySQL Server 8.0\bin\mysqld.exe",
+            "C:\xampp\mysql\bin\mysqld.exe",
+            "C:\wamp\bin\mysql\mysql8.0\bin\mysqld.exe",
+            "C:\wamp64\bin\mysql\mysql8.0\bin\mysqld.exe"
+        )
+        
+        foreach ($path in $standardPaths) {
+            if (Test-Path -Path $path) {
+                $mysqldPath = $path
+                Write-Host "Found mysqld at: $mysqldPath" -ForegroundColor Green
+                break
+            }
+        }
+        
+        if (-not (Test-Path -Path $mysqldPath)) {
+            Write-Host "Could not find mysqld.exe. Please provide the full path to mysqld.exe:" -ForegroundColor Yellow
+            $userPath = Read-Host
+            
+            if (-not [string]::IsNullOrEmpty($userPath) -and (Test-Path -Path $userPath)) {
+                $mysqldPath = $userPath
+            } else {
+                Write-Host "Invalid path. Password reset requires mysqld.exe." -ForegroundColor Red
+                Remove-Item -Path $initFile -Force -ErrorAction SilentlyContinue
+                Read-Host "Press Enter to continue"
+                return
+            }
+        }
+    }
+    
+    # Step 4: Find my.ini path
+    Write-Host "Step 4: Checking for MySQL configuration file..." -ForegroundColor Yellow
+    $defaultsFile = $null
+    
+    try {
+        $wmiService = Get-WmiObject -Class Win32_Service -Filter "Name='$serviceName'" -ErrorAction SilentlyContinue
+        if ($wmiService) {
+            $pathToExecutable = $wmiService.PathName
+            
+            if ($pathToExecutable -match "--defaults-file=([^\""\s]+)") {
+                $defaultsFile = $matches[1]
+                $defaultsFile = $defaultsFile -replace "\\\\", "\"
+                Write-Host "Found defaults-file from service: $defaultsFile" -ForegroundColor Green
+            }
+        }
+    } catch {
+        Write-Host "Could not retrieve service configuration. Will proceed without defaults-file." -ForegroundColor Yellow
+    }
+    
+    if (-not $defaultsFile) {
+        # Try common locations
+        $possiblePaths = @(
+            "C:\ProgramData\MySQL\MySQL Server 8.0\my.ini",
+            "C:\ProgramData\MySQL\MySQL Server 5.7\my.ini",
+            "$MySQLPath\my.ini"
+        )
+        
+        foreach ($path in $possiblePaths) {
+            if (Test-Path $path) {
+                $defaultsFile = $path
+                Write-Host "Found configuration file at: $defaultsFile" -ForegroundColor Green
+                break
+            }
+        }
+    }
+    
+    # Step 5: Run mysqld with init-file
+    Write-Host "Step 5: Starting MySQL with password reset file..." -ForegroundColor Yellow
+    
+    try {
+        # Create command arguments
+        $resetArgs = "--init-file=`"$initFile`" --console"
+        if ($defaultsFile) {
+            $resetArgs = "--defaults-file=`"$defaultsFile`" $resetArgs"
+        }
+        
+        # Prepare a PowerShell command that will start mysqld in a new window
+        $commandLine = "Start-Process -FilePath '$mysqldPath' -ArgumentList '$resetArgs' -Wait -NoNewWindow"
+        
+        # Create batch file to run the command
+        $batchFile = "$env:TEMP\mysql_reset.bat"
+@"
+@echo off
+echo MySQL Password Reset
+echo Running: $mysqldPath $resetArgs
+echo.
+echo Press Ctrl+C when you see MySQL Server is ready for connections
+echo.
+"$mysqldPath" $resetArgs
+"@ | Out-File -FilePath $batchFile -Encoding ASCII -Force
+        
+        # Execute the batch file
+        Write-Host "Starting MySQL with reset parameters..." -ForegroundColor Yellow
+        Write-Host "An admin command prompt will open and run MySQL in reset mode." -ForegroundColor Yellow
+        Write-Host "Wait until you see 'ready for connections' then press Ctrl+C to stop it." -ForegroundColor Yellow
+        Write-Host ""
+        Read-Host "Press Enter to continue"
+        
+        # Start process with admin rights
+        Start-Process "cmd.exe" -ArgumentList "/c $batchFile" -Verb RunAs -Wait
+        
+        # Clean up
+        Remove-Item -Path $batchFile -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+        Write-Host "Error running MySQL with reset parameters: $_" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Manual reset instruction:" -ForegroundColor Yellow
+        Write-Host "1. Open an admin command prompt" -ForegroundColor Yellow
+        Write-Host "2. Navigate to MySQL bin directory: cd $MySQLPath\bin" -ForegroundColor Yellow
+        if ($defaultsFile) {
+            Write-Host "3. Run: mysqld --defaults-file=`"$defaultsFile`" --init-file=`"$initFile`" --console" -ForegroundColor Yellow
+        } else {
+            Write-Host "3. Run: mysqld --init-file=`"$initFile`" --console" -ForegroundColor Yellow
+        }
+        Write-Host "4. Once you see MySQL is ready for connections, press Ctrl+C" -ForegroundColor Yellow
+        
+        $manualConfirm = Read-Host "Do you want to try manual execution now? (y/n)"
+        if ($manualConfirm -eq "y") {
+            # Let user manually open command prompt
+            Write-Host "Please follow the instructions above in a separate command prompt window." -ForegroundColor Yellow
+            Read-Host "Press Enter once you've completed the manual reset"
+        }
+    }
+    
+    # Step 6: Clean up init file
+    Write-Host "Step 6: Cleaning up..." -ForegroundColor Yellow
+    Remove-Item -Path $initFile -Force -ErrorAction SilentlyContinue
+    
+    # Step 7: Start MySQL service normally
+    Write-Host "Step 7: Starting MySQL service normally..." -ForegroundColor Yellow
+    Start-Service -Name $serviceName -ErrorAction SilentlyContinue
+    
+    # Wait for service to start
+    $timeoutCounter = 0
+    while ((Get-Service -Name $serviceName).Status -ne 'Running' -and $timeoutCounter -lt 20) {
+        Start-Sleep -Seconds 1
+        $timeoutCounter++
+    }
+    
+    if ((Get-Service -Name $serviceName).Status -eq 'Running') {
+        Write-Host "MySQL service started successfully." -ForegroundColor Green
+    } else {
+        Write-Host "Warning: MySQL service did not start automatically. Trying to start it manually..." -ForegroundColor Yellow
+        Start-Service -Name $serviceName -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 5
+        
+        if ((Get-Service -Name $serviceName).Status -eq 'Running') {
+            Write-Host "MySQL service started successfully." -ForegroundColor Green
+        } else {
+            Write-Host "MySQL service could not be started. Please start it manually from Services." -ForegroundColor Red
+        }
+    }
+    
+    Write-Host ""
+    Write-Host "Password reset process completed!" -ForegroundColor Green
     Write-Host "New root password is: $newPassword" -ForegroundColor Green
     
     Read-Host "Press Enter to continue"
@@ -702,6 +915,67 @@ if ($mysqlInstallations.Count -eq 0) {
 
 Write-Host "Selected MySQL Path: $global:MySQLPath" -ForegroundColor Green
 
+if (-not (Test-Path -Path "$global:MySQLPath\bin\mysql.exe")) {
+    Write-Host "Error: Invalid MySQL path detected - $global:MySQLPath does not contain bin\mysql.exe" -ForegroundColor Red
+    
+    # Attempt to find common MySQL installations
+    $commonPaths = @(
+        "C:\Program Files\MySQL\MySQL Server 8.0",
+        "C:\Program Files\MySQL\MySQL Server 5.7",
+        "C:\xampp\mysql",
+        "C:\wamp64\bin\mysql\mysql8.0"
+    )
+    
+    $validPaths = @()
+    foreach ($path in $commonPaths) {
+        if (Test-Path -Path "$path\bin\mysql.exe") {
+            $validPaths += $path
+        }
+    }
+    
+    if ($validPaths.Count -gt 0) {
+        Write-Host "Found valid MySQL installations:" -ForegroundColor Green
+        for ($i = 0; $i -lt $validPaths.Count; $i++) {
+            Write-Host "  [$($i+1)] $($validPaths[$i])" -ForegroundColor White
+        }
+        
+        $validChoice = Read-Host "Select a valid MySQL installation (1-$($validPaths.Count))"
+        try {
+            $validIndex = [int]$validChoice - 1
+            if ($validIndex -ge 0 -and $validIndex -lt $validPaths.Count) {
+                $global:MySQLPath = $validPaths[$validIndex]
+                Write-Host "MySQL path updated to: $global:MySQLPath" -ForegroundColor Green
+            }
+        } catch {
+            # Continue to manual entry
+        }
+    }
+    
+    if (-not (Test-Path -Path "$global:MySQLPath\bin\mysql.exe")) {
+        Write-Host "Please enter the FULL path to your MySQL installation (e.g., C:\Program Files\MySQL\MySQL Server 8.0):" -ForegroundColor Yellow
+        $manualPath = Read-Host
+        
+        if (Test-Path -Path "$manualPath\bin\mysql.exe") {
+            $global:MySQLPath = $manualPath
+            Write-Host "MySQL path updated to: $global:MySQLPath" -ForegroundColor Green
+        } else {
+            Write-Host "Invalid MySQL path. The script cannot continue without a valid MySQL client." -ForegroundColor Red
+            Write-Host "Exiting..." -ForegroundColor Red
+            exit 1
+        }
+    }
+}
+
+# Verify MySQL client works
+try {
+    $versionOutput = & "$global:MySQLPath\bin\mysql" --version
+    Write-Host "MySQL client found: $versionOutput" -ForegroundColor Green
+} catch {
+    Write-Host "Warning: Could not get MySQL version information." -ForegroundColor Yellow
+}
+
+Write-Host "Using MySQL installation at: $global:MySQLPath" -ForegroundColor Cyan
+
 # Login
 Show-Header
 Write-Host "MySQL Login" -ForegroundColor Yellow
@@ -711,6 +985,117 @@ $loginAttempts = 0
 $maxLoginAttempts = 3
 $loggedIn = $false
 
+function Test-Credentials {
+    param (
+        [string]$MySQLPath,
+        [string]$Username,
+        [string]$Password
+    )
+    
+    try {
+        # Build command for display (masked password)
+        $displayCmd = "$MySQLPath\bin\mysql.exe --user=`"$Username`" --password=******** --execute=`"SELECT 1;`""
+        Write-Host "Executing command (displaying masked password): $displayCmd" -ForegroundColor Gray
+        
+        # Build actual command
+        $mysqlExe = "$MySQLPath\bin\mysql.exe"
+        $cmdArgs = "--user=`"$Username`""
+        
+        if (-not [string]::IsNullOrEmpty($Password)) {
+            $cmdArgs += " --password=`"$Password`""
+        }
+        
+        $cmdArgs += " --execute=`"SELECT 1;`""
+        
+        # Show full command with real password for debugging (uncomment if needed)
+        Write-Host "Full command: $mysqlExe $cmdArgs" -ForegroundColor Gray
+        
+        # Create process with output capture
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $mysqlExe
+        $psi.Arguments = $cmdArgs
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $psi
+        $process.Start() | Out-Null
+        
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        
+        # Show detailed output
+        Write-Host "Exit Code: $($process.ExitCode)" -ForegroundColor Gray
+        Write-Host "Standard Output: '$stdout'" -ForegroundColor Gray
+        Write-Host "Standard Error: '$stderr'" -ForegroundColor Gray
+        
+        return ($process.ExitCode -eq 0)
+    }
+    catch {
+        Write-Host "Exception occurred: $_" -ForegroundColor Red
+        return $false
+    }
+}
+
+function Test-Credentials {
+    param (
+        [string]$MySQLPath,
+        [string]$Username,
+        [string]$Password
+    )
+    
+    try {
+        # Build command for display (masked password)
+        $displayCmd = "$MySQLPath\bin\mysql.exe --user=`"$Username`" --password=******** --execute=`"SELECT 1;`""
+        Write-Host "Executing command (displaying masked password): $displayCmd" -ForegroundColor Gray
+        
+        # Build actual command
+        $mysqlExe = "$MySQLPath\bin\mysql.exe"
+        $cmdArgs = "--user=`"$Username`""
+        
+        if (-not [string]::IsNullOrEmpty($Password)) {
+            $cmdArgs += " --password=`"$Password`""
+        }
+        
+        $cmdArgs += " --execute=`"SELECT 1;`""
+        
+        # Show full command with real password for debugging (uncomment if needed)
+        Write-Host "Full command: $mysqlExe $cmdArgs" -ForegroundColor Gray
+        
+        # Create process with output capture
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $mysqlExe
+        $psi.Arguments = $cmdArgs
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $psi
+        $process.Start() | Out-Null
+        
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        
+        # Show detailed output
+        Write-Host "Exit Code: $($process.ExitCode)" -ForegroundColor Gray
+        Write-Host "Standard Output: '$stdout'" -ForegroundColor Gray
+        Write-Host "Standard Error: '$stderr'" -ForegroundColor Gray
+        
+        return ($process.ExitCode -eq 0)
+    }
+    catch {
+        Write-Host "Exception occurred: $_" -ForegroundColor Red
+        return $false
+    }
+}
+
+# Login section with additional debugging
 while (-not $loggedIn -and $loginAttempts -lt $maxLoginAttempts) {
     $global:Username = Read-Host "Enter MySQL Username (default: root)"
     
@@ -718,13 +1103,52 @@ while (-not $loggedIn -and $loginAttempts -lt $maxLoginAttempts) {
         $global:Username = "root"
     }
     
-    $passwordSecure = Read-Host "Enter MySQL Password" -AsSecureString
-    $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($passwordSecure)
-    $global:Password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-    [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+    # Allow for plain text password for simplicity during debugging
+    $global:Password = Read-Host "Enter MySQL Password"
     
     Write-Host "Testing connection..." -ForegroundColor Yellow
+    Write-Host "MySQL Path: $global:MySQLPath" -ForegroundColor Gray
+    
+    # Try the traditional approach
     $loggedIn = Test-Credentials -MySQLPath $global:MySQLPath -Username $global:Username -Password $global:Password
+    
+    if (-not $loggedIn) {
+        Write-Host "Trying alternative connection methods..." -ForegroundColor Yellow
+        
+        # Try approach without quotes around password parameter
+        Write-Host "Attempt #2: Without quotes around password" -ForegroundColor Gray
+        $mysqlExe = "$global:MySQLPath\bin\mysql.exe"
+        $noQuotesCmd = "$mysqlExe --user=`"$global:Username`" --password=$global:Password --execute=`"SELECT 1;`""
+        
+        try {
+            $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $noQuotesCmd -NoNewWindow -PassThru -Wait
+            if ($process.ExitCode -eq 0) {
+                Write-Host "Success with no quotes approach!" -ForegroundColor Green
+                $loggedIn = $true
+            } else {
+                Write-Host "Failed with exit code: $($process.ExitCode)" -ForegroundColor Red
+            }
+        } catch {
+            Write-Host "Exception: $_" -ForegroundColor Red
+        }
+        
+        # If still not logged in, try alternative approach with direct command line
+        if (-not $loggedIn) {
+            Write-Host "Attempt #3: Direct command line" -ForegroundColor Gray
+            try {
+                $cmdText = "echo SELECT 1; | $mysqlExe --user=`"$global:Username`" --password=`"$global:Password`""
+                $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $cmdText -NoNewWindow -PassThru -Wait
+                if ($process.ExitCode -eq 0) {
+                    Write-Host "Success with direct command line approach!" -ForegroundColor Green
+                    $loggedIn = $true
+                } else {
+                    Write-Host "Failed with exit code: $($process.ExitCode)" -ForegroundColor Red
+                }
+            } catch {
+                Write-Host "Exception: $_" -ForegroundColor Red
+            }
+        }
+    }
     
     if ($loggedIn) {
         Write-Host "Login successful!" -ForegroundColor Green
@@ -733,16 +1157,166 @@ while (-not $loggedIn -and $loginAttempts -lt $maxLoginAttempts) {
         if ($loginAttempts -lt $maxLoginAttempts) {
             Write-Host "Login failed. Attempts remaining: $($maxLoginAttempts - $loginAttempts)" -ForegroundColor Red
         } else {
-            Write-Host "Maximum login attempts reached. Would you like to reset the root password? (y/n)" -ForegroundColor Yellow
-            $resetChoice = Read-Host
+            Write-Host "Maximum login attempts reached." -ForegroundColor Red
             
-            if ($resetChoice -eq "y") {
-                Reset-RootPassword -MySQLPath $global:MySQLPath
-                # Restart login process
-                $loginAttempts = 0
+            # Try with no password as last resort
+            Write-Host "Last attempt: Trying with no password..." -ForegroundColor Yellow
+            $loggedIn = Test-Credentials -MySQLPath $global:MySQLPath -Username $global:Username -Password ""
+            
+            if ($loggedIn) {
+                Write-Host "Success with empty password!" -ForegroundColor Green
             } else {
-                Write-Host "Exiting..." -ForegroundColor Red
-                exit 1
+                Write-Host "Authentication failed with all methods." -ForegroundColor Red
+                Write-Host "Would you like to reset the root password? (y/n)" -ForegroundColor Yellow
+                $resetChoice = Read-Host
+                
+                if ($resetChoice -eq "y") {
+                    Reset-RootPassword -MySQLPath $global:MySQLPath
+                    $loginAttempts = 0
+                } else {
+                    Write-Host "Exiting..." -ForegroundColor Red
+                    exit 1
+                }
+            }
+        }
+    }
+}function Test-Credentials {
+    param (
+        [string]$MySQLPath,
+        [string]$Username,
+        [string]$Password
+    )
+    
+    try {
+        # Build command for display (masked password)
+        $displayCmd = "$MySQLPath\bin\mysql.exe --user=`"$Username`" --password=******** --execute=`"SELECT 1;`""
+        Write-Host "Executing command (displaying masked password): $displayCmd" -ForegroundColor Gray
+        
+        # Build actual command
+        $mysqlExe = "$MySQLPath\bin\mysql.exe"
+        $cmdArgs = "--user=`"$Username`""
+        
+        if (-not [string]::IsNullOrEmpty($Password)) {
+            $cmdArgs += " --password=`"$Password`""
+        }
+        
+        $cmdArgs += " --execute=`"SELECT 1;`""
+        
+        # Show full command with real password for debugging (uncomment if needed)
+        Write-Host "Full command: $mysqlExe $cmdArgs" -ForegroundColor Gray
+        
+        # Create process with output capture
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = $mysqlExe
+        $psi.Arguments = $cmdArgs
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $psi
+        $process.Start() | Out-Null
+        
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        
+        # Show detailed output
+        Write-Host "Exit Code: $($process.ExitCode)" -ForegroundColor Gray
+        Write-Host "Standard Output: '$stdout'" -ForegroundColor Gray
+        Write-Host "Standard Error: '$stderr'" -ForegroundColor Gray
+        
+        return ($process.ExitCode -eq 0)
+    }
+    catch {
+        Write-Host "Exception occurred: $_" -ForegroundColor Red
+        return $false
+    }
+}
+
+# Login section with additional debugging
+while (-not $loggedIn -and $loginAttempts -lt $maxLoginAttempts) {
+    $global:Username = Read-Host "Enter MySQL Username (default: root)"
+    
+    if ([string]::IsNullOrEmpty($global:Username)) {
+        $global:Username = "root"
+    }
+    
+    # Allow for plain text password for simplicity during debugging
+    $global:Password = Read-Host "Enter MySQL Password"
+    
+    Write-Host "Testing connection..." -ForegroundColor Yellow
+    Write-Host "MySQL Path: $global:MySQLPath" -ForegroundColor Gray
+    
+    # Try the traditional approach
+    $loggedIn = Test-Credentials -MySQLPath $global:MySQLPath -Username $global:Username -Password $global:Password
+    
+    if (-not $loggedIn) {
+        Write-Host "Trying alternative connection methods..." -ForegroundColor Yellow
+        
+        # Try approach without quotes around password parameter
+        Write-Host "Attempt #2: Without quotes around password" -ForegroundColor Gray
+        $mysqlExe = "$global:MySQLPath\bin\mysql.exe"
+        $noQuotesCmd = "$mysqlExe --user=`"$global:Username`" --password=$global:Password --execute=`"SELECT 1;`""
+        
+        try {
+            $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $noQuotesCmd -NoNewWindow -PassThru -Wait
+            if ($process.ExitCode -eq 0) {
+                Write-Host "Success with no quotes approach!" -ForegroundColor Green
+                $loggedIn = $true
+            } else {
+                Write-Host "Failed with exit code: $($process.ExitCode)" -ForegroundColor Red
+            }
+        } catch {
+            Write-Host "Exception: $_" -ForegroundColor Red
+        }
+        
+        # If still not logged in, try alternative approach with direct command line
+        if (-not $loggedIn) {
+            Write-Host "Attempt #3: Direct command line" -ForegroundColor Gray
+            try {
+                $cmdText = "echo SELECT 1; | $mysqlExe --user=`"$global:Username`" --password=`"$global:Password`""
+                $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $cmdText -NoNewWindow -PassThru -Wait
+                if ($process.ExitCode -eq 0) {
+                    Write-Host "Success with direct command line approach!" -ForegroundColor Green
+                    $loggedIn = $true
+                } else {
+                    Write-Host "Failed with exit code: $($process.ExitCode)" -ForegroundColor Red
+                }
+            } catch {
+                Write-Host "Exception: $_" -ForegroundColor Red
+            }
+        }
+    }
+    
+    if ($loggedIn) {
+        Write-Host "Login successful!" -ForegroundColor Green
+    } else {
+        $loginAttempts++
+        if ($loginAttempts -lt $maxLoginAttempts) {
+            Write-Host "Login failed. Attempts remaining: $($maxLoginAttempts - $loginAttempts)" -ForegroundColor Red
+        } else {
+            Write-Host "Maximum login attempts reached." -ForegroundColor Red
+            
+            # Try with no password as last resort
+            Write-Host "Last attempt: Trying with no password..." -ForegroundColor Yellow
+            $loggedIn = Test-Credentials -MySQLPath $global:MySQLPath -Username $global:Username -Password ""
+            
+            if ($loggedIn) {
+                Write-Host "Success with empty password!" -ForegroundColor Green
+            } else {
+                Write-Host "Authentication failed with all methods." -ForegroundColor Red
+                Write-Host "Would you like to reset the root password? (y/n)" -ForegroundColor Yellow
+                $resetChoice = Read-Host
+                
+                if ($resetChoice -eq "y") {
+                    Reset-RootPassword -MySQLPath $global:MySQLPath
+                    $loginAttempts = 0
+                } else {
+                    Write-Host "Exiting..." -ForegroundColor Red
+                    exit 1
+                }
             }
         }
     }
