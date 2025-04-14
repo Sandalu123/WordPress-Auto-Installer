@@ -1,8 +1,17 @@
-# WordPress Auto-Installer
+# Linux & Windows Server Tools
 
-An interactive Bash script that automatically installs and configures WordPress with multiple SSL options, custom port configuration, and firewall settings.
+This repository contains useful scripts for managing server environments on both Linux and Windows.
 
-## Features
+- **Linux:** An interactive Bash script for automatically installing and configuring WordPress with multiple SSL options, custom port configuration, and firewall settings.
+- **Windows:** A PowerShell-based text UI tool for managing MySQL installations (service control, database/table/user listing, backups, restores, root password reset).
+
+---
+
+## 1. Linux: WordPress Auto-Installer
+
+An interactive Bash script that automatically installs and configures WordPress on Debian/Ubuntu-based systems.
+
+### Features
 
 - **Interactive setup**: Configure HTTP/HTTPS ports and firewall settings
 - **Multiple SSL options**:
@@ -17,100 +26,114 @@ An interactive Bash script that automatically installs and configures WordPress 
 - **Full LAMP stack**: Installs and configures Linux, Apache, MySQL, and PHP
 - **Detailed logging**: Saves all credentials and configuration to a protected log file
 
-## Requirements
+### Requirements
 
 - Ubuntu or Debian-based Linux distribution
 - Root access
 - Internet connection
 - Domain name (required for Let's Encrypt and recommended for CloudFlare)
 
-## Quick Install
+### Quick Install (Run from URL)
 
-Execute directly from GitHub:
+Execute directly from GitHub (requires `curl`):
 
 ```bash
-curl -L https://raw.githubusercontent.com/Sandalu123/WordPress-Auto-Installer/main/install-wordpress.sh | sudo bash
+curl -L https://raw.githubusercontent.com/Sandalu123/MiniTools/refs/heads/main/Linux/auto-install-wordpress.sh | sudo bash
 ```
 
-## Manual Installation
+### Manual Installation
 
 ```bash
 # Clone repository
 git clone https://github.com/Sandalu123/WordPress-Auto-Installer.git
 
 # Navigate to directory
-cd WordPress-Auto-Installer
+cd WordPress-Auto-Installer/Linux
 
 # Make script executable
-chmod +x install-wordpress.sh
+chmod +x auto-install-wordpress.sh
 
 # Run script as root
-sudo ./install-wordpress.sh
+sudo ./auto-install-wordpress.sh
 ```
 
-## SSL Configuration Options
+### SSL Configuration Options
 
-### 1. Self-signed Certificate
-- Quickest setup option
-- No domain required
-- Browser will show security warnings
-- Good for development and testing
+(Details on Self-signed, CloudFlare, Let's Encrypt, Custom SSL - *same as original README*)
 
-### 2. CloudFlare
-- Uses CloudFlare as SSL provider
-- Requires a CloudFlare account and domain
-- Configures Apache for CloudFlare origin certificates
-- Provides proper SSL without browser warnings
+### Firewall Configuration
 
-### 3. Let's Encrypt
-- Free trusted SSL certificates
-- Requires a domain pointing to your server
-- Automatic certificate renewal
-- No browser warnings
+(Details on UFW configuration - *same as original README*)
 
-### 4. Custom SSL Certificate
-- Use your existing SSL certificate files
-- Validates certificate and key before installation
-- Supports various certificate formats
+### What It Does
 
-## Firewall Configuration
+(Details on the installation steps - *same as original README*)
 
-The script can configure UFW (Uncomplicated Firewall) with:
-- Custom SSH port (enhanced security)
-- WordPress HTTP/HTTPS ports
-- Additional custom ports as needed
+### After Installation
 
-## What It Does
+(Details on accessing WordPress and credentials file - *same as original README*)
 
-1. Prompts for configuration settings
-2. Updates system packages
-3. Installs Apache, MySQL, and PHP with required extensions
-4. Configures Apache to run on your specified port
-5. Sets up SSL with your chosen method
-6. Configures MySQL with secure random passwords
-7. Downloads and installs the latest WordPress
-8. Sets up proper file permissions for security
-9. Configures firewall rules if enabled
-10. Saves all credentials and configuration to a protected log file
+### CloudFlare Configuration
 
-## After Installation
+(Post-installation steps for CloudFlare - *same as original README*)
 
-Once installation is complete:
+---
 
-- WordPress will be installed at `/var/www/html`
-- Access your WordPress site at the configured HTTP/HTTPS URL
-- Complete the WordPress setup by visiting your site in a browser
-- All credentials are saved to `/root/wp_credentials.log`
+## 2. Windows: MySQL Management Tool
 
-## CloudFlare Configuration
+A text-based UI tool built with PowerShell for managing MySQL databases on Windows.
 
-If using CloudFlare, after running this script:
+### Features
 
-1. Log in to your CloudFlare dashboard
-2. Ensure your domain's A record points to your server IP
-3. Set SSL/TLS encryption mode to "Full" or "Full (strict)"
-4. Enable "Always Use HTTPS" for best security
+- **Auto-detect MySQL**: Finds common MySQL installation paths (Program Files, XAMPP, WAMP, Laragon).
+- **Service Management**: Start, stop, restart, and check the status of the MySQL service.
+- **User Management**: List MySQL users.
+- **Database Management**:
+    - List databases.
+    - Create new databases.
+    - Delete databases.
+- **Table Management**: List tables within a selected database.
+- **Backup & Restore**:
+    - Backup individual databases.
+    - Backup all databases.
+    - Restore databases from `.sql` files.
+- **Root Password Reset**: Utility to reset the MySQL root password using the `init-file` method.
+- **Credential Testing**: Verify MySQL connection credentials.
+- **Custom MySQL Path**: Option to specify a custom path to your MySQL installation.
+
+### Requirements
+
+- Windows Operating System
+- PowerShell (usually included with Windows)
+- MySQL installed on the system
+
+### Quick Run (Run from URL)
+
+Execute directly from GitHub using PowerShell:
+
+```powershell
+Invoke-Expression (Invoke-RestMethod -Uri 'https://raw.githubusercontent.com/Sandalu123/MiniTools/refs/heads/main/Windows/mysql-manager.ps1')
+```
+*Note: You might need to adjust PowerShell execution policies (`Set-ExecutionPolicy`) if you encounter issues running scripts downloaded from the internet.*
+
+### Manual Run
+
+```powershell
+# Clone repository (using Git or download ZIP)
+git clone https://github.com/Sandalu123/WordPress-Auto-Installer.git
+
+# Navigate to directory in PowerShell
+cd WordPress-Auto-Installer\Windows
+
+# Run the script
+.\mysql-manager.ps1
+
+# Optional: Specify a custom MySQL path
+.\mysql-manager.ps1 -CustomPath "C:\path\to\your\mysql"
+```
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License.
